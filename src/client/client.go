@@ -66,7 +66,7 @@ func handleServerResponses (conn *websocket.Conn) {
 	}()
 }
 
-func sendMessages (conn *websocket.Conn) {
+func sendMessages (conn *websocket.Conn, reader *bufio.Reader, username string) {
 	for {
 		content := "";
 		fmt.Print("Type: ")
@@ -186,6 +186,7 @@ func main() {
 
 	handleServerResponses(conn)
 
+	sendMessages(conn, reader, username)
 
 	// // Goroutine to listen for incoming messages
 	// go func() {
