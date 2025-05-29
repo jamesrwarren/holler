@@ -26,10 +26,10 @@ permissions:
   statuses: none
 
 jobs:
-  workflow_variables:
+  success:
     runs-on: ubuntu-latest
-    name: blah
+    name: success
     steps:
       - name: test
-        id: blah
-        run: echo "blah"
+        id: success
+        run: echo "Yay"
