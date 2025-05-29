@@ -1,0 +1,12 @@
+services: 
+  database:
+    container_name: holler-db
+    image: postgres:17.4
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: holler
+      POSTGRES_PASSWORD: holler
+      POSTGRES_HOST: database
+      POSTGRES_DB: holler
+    restart: always
