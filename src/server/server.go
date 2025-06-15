@@ -42,30 +42,6 @@ var upgrader = websocket.Upgrader{
 var clients = make(map[*websocket.Conn]Client)
 var broadcast = make(chan BroadcastObject)
 
-func main() {
-	var err error
-	connStr := "postgres://holler:holler@localhost:5432/holler?sslmode=disable" 
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatalf("❌ Failed to connect to DB: %v", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Fatalf("❌ DB ping failed: %v", err)
-	}
-
-	setupHollerEnvironment()
-
-	// Checks for auth in here and passes through requests to handleRequests
-	http.HandleFunc("/ws", handleClientConnection)
-	// main request handler for authneticated users!
-	go handleRequests()
-
-	fmt.Println("✅ Server started on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
-}
-
 func setupHollerEnvironment() {
 	query := `
 	CREATE TABLE IF NOT EXISTS messages (
@@ -168,12 +144,12 @@ func handleClientConnection(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleLogin(username string, password string) (sharedTypes.Response) {
+func handleLogin(username string, password string) (sharedTypes.ServerResponse) {
 	log.Printf("🦾 Trying to login with %s: %s", username, password)
 	if password == "password" {
 		log.Printf("🐝 Login Success for %s", username)
 
-		loginResponse := sharedTypes.Response{
+		loginResponse := sharedTypes.ServerResponse{
 			Type:    "loginResponse",
 			Success: true,
 			Message: "✅ Login successful!",
@@ -182,7 +158,7 @@ func handleLogin(username string, password string) (sharedTypes.Response) {
 	} 
 
 	log.Printf("❌ Login Unsuccessful %s: %v", username, password)
-	loginResponse := sharedTypes.Response{
+	loginResponse := sharedTypes.ServerResponse{
 			Type:    "loginResponse",
 			Success: false,
 			Message: "❌ Login unsuccessful!",
@@ -395,16 +371,39 @@ func listFriendRequests(data []byte, client Client) {
 		log.Printf("⚠️ Rows iteration error: %v", err)
 	}
 
-	response := sharedTypes.Message{
+	response := sharedTypes.ServerResponse{
 		Type:    "serverResponse",
-		Username: listFriendRequests.Username,
-		Content: strings.Join(friendRequestUsernames[:],","),
+		Success: true,
+		Message: strings.Join(friendRequestUsernames[:],","),
 	}
 	err = client.Conn.WriteJSON(response)
 	if err != nil {
-		log.Printf("⚠️ Send error from %s: %v", response.Username, err)
+		log.Printf("⚠️ Send error from %s: %v", client.Username, err)
 		client.Conn.Close()
 		delete(clients, client.Conn)
 	}
 }
 
+func main() {
+	var err error
+	connStr := "postgres://holler:holler@localhost:5432/holler?sslmode=disable" 
+	db, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalf("❌ Failed to connect to DB: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		log.Fatalf("❌ DB ping failed: %v", err)
+	}
+
+	setupHollerEnvironment()
+
+	// Checks for auth in here and passes through requests to handleRequests
+	http.HandleFunc("/ws", handleClientConnection)
+	// main request handler for authneticated users!
+	go handleRequests()
+
+	fmt.Println("✅ Server started on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
