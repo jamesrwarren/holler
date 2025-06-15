@@ -13,7 +13,7 @@ type Login struct {
 	Password string `json:"password"`
 }
 
-type Response struct {
+type ServerResponse struct {
 	Type    string `json:"type"`
 	Success bool   `json:"success"`
 	Message string `json:"message,omitempty"`
