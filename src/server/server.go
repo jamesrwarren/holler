@@ -191,12 +191,38 @@ func handleRequests() {
 				handleFriendRequest(data, client)
 			case "listFriendRequests":
 				listFriendRequests(data, client)
-			// case "acceptFriendRequest":
-			// 	handleFollowRequest(data)
+			case "logOut":
+				logOut(data, client)
 			default:
 				log.Printf("Unknown Type: %s", peek.Type)
 		}
 	}
+}
+
+func logOut(data []byte, client Client) {
+	var msg sharedTypes.LogOut
+	err := json.Unmarshal(data, &msg)
+	if err != nil {
+		log.Println("❌ Error unmarshaling message:", err)
+		return
+	}
+	
+	response := sharedTypes.ServerResponse{
+		Type:    "serverResponse",
+		Success: true,
+		Message: "Log Out Successful",
+	}
+
+	err = client.Conn.WriteJSON(response)
+	if err != nil {
+		log.Printf("⚠️ Send error from %s: %v", client.Username, err)
+		client.Conn.Close()
+		delete(clients, client.Conn)
+	}
+
+	log.Printf("✅ Logging out user %s: %v", client.Username, err)
+	client.Conn.Close()
+	delete(clients, client.Conn)
 }
 
 func handlePost(data []byte) {
