@@ -35,3 +35,7 @@ type ListFriendRequests struct {
 	Type    string `json:"type"`
 	Username string `json:"username"`
 }
+
+type LogOut struct {
+	Type    string `json:"type"`
+}

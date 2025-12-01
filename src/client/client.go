@@ -1,213 +1,318 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
 	"strings"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
 	"github.com/gorilla/websocket"
+
 	"holler/shared"
 )
 
-func handleMessagesFromServer (conn *websocket.Conn) {
-	// Goroutine to listen for incoming messages
+var logOutput *widget.Entry
+
+func logToUI(msg string) {
+	logOutput.SetText(logOutput.Text + msg + "\n")
+}
+
+func handleMessagesFromServer(conn *websocket.Conn, authenticated *bool, onAuthenticated func()) {
 	go func() {
 		for {
 			_, data, err := conn.ReadMessage()
 			if err != nil {
-				log.Println("❌ Error reading from server:", err)
+				logToUI("❌ Error reading: " + err.Error())
 				return
 			}
-	
-			// Peek inside to get the "type"
+
 			var peek struct {
 				Type string `json:"type"`
 			}
-			err = json.Unmarshal(data, &peek)
-			if err != nil {
-				log.Println("❌ Error unmarshaling type:", err)
+			if err := json.Unmarshal(data, &peek); err != nil {
+				logToUI("❌ Unmarshal error: " + err.Error())
 				continue
 			}
-	
+
 			switch peek.Type {
-				case "loginResponse":
-					var resp sharedTypes.ServerResponse
-					err = json.Unmarshal(data, &resp)
-					if err != nil {
-						log.Println("❌ Error unmarshaling response:", err)
-						continue
-					}
-					if resp.Success {
-						fmt.Println("🎉 Login successful:", resp.Message)
-					} else {
-						fmt.Println("❌ Login failed:", resp.Message)
-					}
-				case "serverResponse":
-					var msg sharedTypes.Message
-					err = json.Unmarshal(data, &msg)
-					if err != nil {
-						log.Println("❌ Error unmarshaling message:", err)
-						continue
-					}
-					fmt.Printf("📨 Response from Server: %s\n", msg.Content)					
-				default:
-					var msg sharedTypes.Message
-					err = json.Unmarshal(data, &msg)
-					if err != nil {
-						log.Println("❌ Error unmarshaling message:", err)
-						continue
-					}
-					fmt.Printf("📨 From %s: %s\n", msg.Username, msg.Content)
+			case "loginResponse":
+				var resp sharedTypes.ServerResponse
+				_ = json.Unmarshal(data, &resp)
+				if resp.Success {
+					*authenticated = true
+					onAuthenticated()
 				}
+				logToUI("🔐 Login: " + resp.Message)
+			case "serverResponse":
+				var msg sharedTypes.Message
+				_ = json.Unmarshal(data, &msg)
+				logToUI("📨 Server: " + msg.Content)
+			default:
+				var msg sharedTypes.Message
+				_ = json.Unmarshal(data, &msg)
+				logToUI(fmt.Sprintf("👤 %s: %s", msg.Username, msg.Content))
+			}
 		}
 	}()
 }
 
-func sendLogin(conn *websocket.Conn, reader *bufio.Reader, typeOfMsg string, username string) (bool) {
-	fmt.Print("Enter your password: ")
-	password, _ := reader.ReadString('\n')
-	password = strings.TrimSpace(password)
+func connectAndLogin(usernameEntry, passwordEntry *widget.Entry) *websocket.Conn {
+	u := strings.TrimSpace(usernameEntry.Text)
+	p := strings.TrimSpace(passwordEntry.Text)
+
+	if u == "" || p == "" {
+		logToUI("Username and password required")
+		return nil
+	}
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
+	if err != nil {
+		logToUI("❌ Connection failed: " + err.Error())
+		return nil
+	}
 
 	login := sharedTypes.Login{
-		Type: typeOfMsg,
-		Username: username,
-		Password: password,
+		Type:     "login",
+		Username: u,
+		Password: p,
+	}
+	if err := conn.WriteJSON(login); err != nil {
+		logToUI("❌ Send error on login: " + err.Error())
+		return nil
 	}
 
-	err := conn.WriteJSON(login)
-	if err != nil {
-		log.Println("❌ Send error on login:", err)
-		return false
-	}
-
-	return true
+	return conn
 }
 
-func sendPost(conn *websocket.Conn, reader *bufio.Reader, typeOfMsg string, username string) (bool) {
-	fmt.Print("Enter your message: ")
-	message, _ := reader.ReadString('\n')
-	message = strings.TrimSpace(message)
+func sendPost(usernameEntry *widget.Entry, messageEntry *widget.Entry, conn *websocket.Conn) {
+	if conn == nil {
+		logToUI("Not connected.")
+		return
+	}
 	msg := sharedTypes.Message{
-		Type: typeOfMsg,
-		Username: username,
-		Content: message,
+		Type:     "post",
+		Username: usernameEntry.Text,
+		Content:  messageEntry.Text,
 	}
-	err := conn.WriteJSON(msg)
-	if err != nil {
-		log.Println("❌ Send error on message:", err)
-		return false
-	}
-	return true
+	_ = conn.WriteJSON(msg)
+	messageEntry.SetText("")
 }
 
-func sendFollowRequest(conn *websocket.Conn, reader *bufio.Reader, typeOfMsg string, username string) (bool) {
-	fmt.Print("Enter username to follow: ")
-	usernameToFollow, _ := reader.ReadString('\n')
-	usernameToFollow = strings.TrimSpace(usernameToFollow)
-	followRequest := sharedTypes.FollowRequest{
-		Type: typeOfMsg,
-		RequestingUserName: username,
-		FollowedUserName: usernameToFollow,
+func sendFollowRequest(usernameEntry *widget.Entry, targetUserEntry *widget.Entry, conn *websocket.Conn) {
+	req := sharedTypes.FollowRequest{
+		Type:               "makeFollowRequest",
+		RequestingUserName: usernameEntry.Text,
+		FollowedUserName:   targetUserEntry.Text,
 	}
-	err := conn.WriteJSON(followRequest)
-	if err != nil {
-		log.Println("❌ Send error on message:", err)
-		return false
-	}
-	return true
+	_ = conn.WriteJSON(req)
 }
 
-func sendFriendRequest(conn *websocket.Conn, reader *bufio.Reader, typeOfMsg string, username string) (bool) {
-	fmt.Print("Enter username to follow: ")
-	usernameToFriend, _ := reader.ReadString('\n')
-	usernameToFriend = strings.TrimSpace(usernameToFriend)
-	friendRequest := sharedTypes.FriendRequest{
-		Type: typeOfMsg,
-		RequestingUserName: username,
-		RequestedUserName: usernameToFriend,
+func sendFriendRequest(usernameEntry *widget.Entry, targetUserEntry *widget.Entry, conn *websocket.Conn) {
+	req := sharedTypes.FriendRequest{
+		Type:               "makeFriendRequest",
+		RequestingUserName: usernameEntry.Text,
+		RequestedUserName:  targetUserEntry.Text,
 	}
-	err := conn.WriteJSON(friendRequest)
-	if err != nil {
-		log.Println("❌ Send error on message:", err)
-		return false
-	}
-	return true
+	_ = conn.WriteJSON(req)
 }
 
-func sendListFriendRequests(conn *websocket.Conn, reader *bufio.Reader, typeOfMsg string, username string) (bool) {
-	listFriendsRequest := sharedTypes.ListFriendRequests{
-		Type: typeOfMsg,
-		Username: username,
+func sendListFriendRequests(usernameEntry *widget.Entry, conn *websocket.Conn) {
+	req := sharedTypes.ListFriendRequests{
+		Type:     "listFriendRequests",
+		Username: usernameEntry.Text,
 	}
-	err := conn.WriteJSON(listFriendsRequest)
-	if err != nil {
-		log.Println("❌ Send error on message:", err)
-		return false
-	}
-	return true
+	_ = conn.WriteJSON(req)
 }
 
-func handleSendingMessages (conn *websocket.Conn, reader *bufio.Reader, username string) {
-	for {
-		content := "";
-		fmt.Print("Type: ")
-		typeOfMsg, _ := reader.ReadString('\n')
-		typeOfMsg = strings.TrimSpace(typeOfMsg)
-
-
-		switch typeOfMsg {
-			case "login":
-				sendLogin(conn, reader, typeOfMsg, username) 
-			case "post":
-				sendPost(conn, reader, typeOfMsg, username)
-			case "makeFollowRequest":
-				sendFollowRequest(conn, reader, typeOfMsg, username)
-			case "makeFriendRequest":
-				sendFriendRequest(conn, reader, typeOfMsg, username)
-			case "listFriendRequests":
-				sendListFriendRequests(conn, reader, typeOfMsg, username)
-			default:
-				log.Printf("Unknown Type: %s", typeOfMsg)
-		}
-
-		if content == "" || typeOfMsg == "" {
-			continue
-		}
-
-		msg := sharedTypes.Message{
-			Username: username,
-			Type: typeOfMsg,
-			Content: content,
-		}
-
-		log.Println("Message to send: ", msg)
-
-		err := conn.WriteJSON(msg)
-		if err != nil {
-			log.Println("❌ Send error:", err)
-			break
-		}
+func logout(conn *websocket.Conn, authenticated *bool, refreshUI func()) {
+	req := sharedTypes.LogOut{
+		Type:     "logOut",
 	}
+	_ = conn.WriteJSON(req)
+	*authenticated = false
+	refreshUI()
+}
+
+func buildUI(authenticated bool, conn **websocket.Conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry *widget.Entry, w fyne.Window, buildTarget string) fyne.CanvasObject {
+	if !authenticated {
+		return buildLoginUI(&authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w)
+	}
+
+	if buildTarget == "follow" {
+		return buildSendFollowUI(&authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w)
+	} 
+
+	if buildTarget == "friend" {
+		return buildSendFriendUI(&authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w)
+	} 
+
+	if buildTarget == "listFriends" {
+		return buildListFriendsUI(&authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w)
+	} 
+
+	return buildSendMessageUI(&authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w)
+	
+}
+
+func makeRefreshUI(
+	authenticated *bool,
+	conn **websocket.Conn,
+	usernameEntry, passwordEntry, messageEntry, targetUserEntry *widget.Entry,
+	w fyne.Window,
+	view string,
+) func() {
+	return func() {
+		fyne.CurrentApp().Driver().DoFromGoroutine(func() {
+			w.SetContent(container.NewVScroll(
+				buildUI(*authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, view),
+			))
+		}, false)
+	}
+}
+
+func buildLoginUI(
+	authenticated *bool,
+	conn **websocket.Conn,
+	usernameEntry, passwordEntry, messageEntry, targetUserEntry *widget.Entry,
+	w fyne.Window,
+) fyne.CanvasObject {
+	
+	onAuthenticated := func() {
+		fyne.CurrentApp().Driver().DoFromGoroutine(func() {
+			w.SetContent(container.NewVScroll(
+				buildUI(*authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, ""),
+			))
+		}, false)
+	}
+
+	return container.NewVBox(
+		widget.NewLabel("Username"),
+		usernameEntry,
+		widget.NewLabel("Password"),
+		passwordEntry,
+		widget.NewButton("Login & Connect", func() {
+			*conn = connectAndLogin(usernameEntry, passwordEntry)
+			if *conn != nil {
+				handleMessagesFromServer(*conn, authenticated, onAuthenticated)
+			}
+		}),
+		widget.NewLabel("Server Output"),
+		logOutput,
+	)
+}
+
+func buildSendMessageUI(
+	authenticated *bool, 
+	conn **websocket.Conn, usernameEntry, 
+	passwordEntry, messageEntry, 
+	targetUserEntry *widget.Entry, 
+	w fyne.Window,
+) fyne.CanvasObject {
+
+	return container.NewVBox(		
+		widget.NewLabel("Message"),
+		messageEntry,
+		widget.NewButton("Post", func() { sendPost(usernameEntry, passwordEntry, *conn) }),
+		widget.NewLabel("Target Username (Follow/Friend)"),
+		targetUserEntry,
+		widget.NewButton("Send Follow Request", func() {
+			makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "follow")()
+		}),
+		widget.NewButton("Send Friend Request", func() {
+			makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "friend")()
+		}),
+		widget.NewButton("List Friend Requests", func() {
+			makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "listFriends")()
+		}),
+		widget.NewButton("Logout", func() {
+			logout(*conn, authenticated, func() { makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "logout")() })
+		}),
+		widget.NewLabel("Server Output"),
+		logOutput,
+	)
+}
+
+func buildSendFollowUI(
+	authenticated *bool, 
+	conn **websocket.Conn, usernameEntry, 
+	passwordEntry, messageEntry, 
+	targetUserEntry *widget.Entry, 
+	w fyne.Window,
+) fyne.CanvasObject {
+
+	return container.NewVBox(		
+		widget.NewLabel("Target Username to Follow"),
+		targetUserEntry,
+		widget.NewButton("Send Follow Request", func() { sendFollowRequest(usernameEntry, targetUserEntry, *conn) }),
+		widget.NewButton("Logout", func() {
+			logout(*conn, authenticated, func() { makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "logout")() })
+		}),
+		widget.NewLabel("Server Output"),
+		logOutput,
+	)
+}
+
+func buildSendFriendUI(
+	authenticated *bool, 
+	conn **websocket.Conn, usernameEntry, 
+	passwordEntry, messageEntry, 
+	targetUserEntry *widget.Entry, 
+	w fyne.Window,
+) fyne.CanvasObject {
+
+	return container.NewVBox(		
+		widget.NewLabel("Target Username to Friend"),
+		targetUserEntry,
+		widget.NewButton("Send Friend Request", func() { sendFriendRequest(usernameEntry, targetUserEntry, *conn) }),
+		widget.NewButton("Logout", func() {
+			logout(*conn, authenticated, func() { makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "logout")() })
+		}),
+		widget.NewLabel("Server Output"),
+		logOutput,
+	)
+}
+
+func buildListFriendsUI(
+	authenticated *bool, 
+	conn **websocket.Conn, usernameEntry, 
+	passwordEntry, messageEntry, 
+	targetUserEntry *widget.Entry, 
+	w fyne.Window,
+) fyne.CanvasObject {
+
+	return container.NewVBox(		
+		widget.NewButton("List Friends", func() { sendListFriendRequests(usernameEntry, *conn) }),
+		widget.NewButton("Logout", func() {
+			logout(*conn, authenticated, func() { makeRefreshUI(authenticated, conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "logout")() })
+		}),
+		widget.NewLabel("Server Output"),
+		logOutput,
+	)
 }
 
 func main() {
-	conn, _, err := websocket.DefaultDialer.Dial("ws://localhost:8080/ws", nil)
-	if err != nil {
-		log.Fatal("❌ Connection failed:", err)
-	}
-	defer conn.Close()
+	a := app.New()
+	w := a.NewWindow("Holler Client")
+	w.Resize(fyne.NewSize(600, 500))
 
-	reader := bufio.NewReader(os.Stdin)
+	var conn *websocket.Conn
+	usernameEntry := widget.NewEntry()
+	passwordEntry := widget.NewPasswordEntry()
+	messageEntry := widget.NewEntry()
+	targetUserEntry := widget.NewEntry()
 
-	// Ask for username
-	fmt.Print("Enter your username: ")
-	username, _ := reader.ReadString('\n')
-	username = strings.TrimSpace(username)
+	logOutput = widget.NewMultiLineEntry()
+	logOutput.Wrapping = fyne.TextWrapWord
+	logOutput.SetMinRowsVisible(10)
+	// logOutput.Disable()
 
-	handleMessagesFromServer(conn)
+	authenticated := false
 
-	handleSendingMessages(conn, reader, username)
+	ui := buildUI(authenticated, &conn, usernameEntry, passwordEntry, messageEntry, targetUserEntry, w, "")
+	scrollable := container.NewVScroll(ui)
+	w.SetContent(scrollable)
+	w.ShowAndRun()
 }
