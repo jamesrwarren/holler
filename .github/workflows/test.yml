@@ -1,0 +1,35 @@
+name: "[Workflow] All branch based pushes"
+
+concurrency:
+  group: ${{ github.ref }}-${{ github.workflow }}
+
+defaults:
+  run:
+    shell: bash
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  id-token: none
+  contents: none
+  security-events: none
+  pull-requests: write
+  actions: none
+  checks: none
+  deployments: none
+  issues: none
+  packages: none
+  repository-projects: none
+  statuses: none
+
+jobs:
+  success:
+    runs-on: ubuntu-latest
+    name: success
+    steps:
+      - name: test
+        id: success
+        run: echo "Yay"
